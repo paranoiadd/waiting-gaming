@@ -1,0 +1,11 @@
+{
+  "name": "waiting-gaming",
+  "version": "0.1.1",
+  "description": "Play 2048 locally while waiting for a Codex turn.",
+  "hooks": "./hooks/hooks.json",
+  "interface": {
+    "displayName": "等待小游戏 · 2048",
+    "shortDescription": "等 Codex 回答时玩 2048",
+    "category": "Productivity"
+  }
+}
