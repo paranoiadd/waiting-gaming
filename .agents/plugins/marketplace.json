@@ -1,0 +1,20 @@
+{
+  "name": "waiting-gaming",
+  "interface": {
+    "displayName": "Waiting Gaming"
+  },
+  "plugins": [
+    {
+      "name": "waiting-gaming",
+      "source": {
+        "source": "local",
+        "path": "./package"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ]
+}

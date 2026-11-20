@@ -28,6 +28,15 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\build.ps1 -Test
 
 需要在 Windows 桌面登录并使用 Codex 本地会话，以便 Hook 和游戏窗口在同一桌面会话中运行。
 
+可以直接从 GitHub 安装仓库内的 Windows 预构建包，然后审查 Hooks 并新开本地会话。
+
+```powershell
+codex plugin marketplace add paranoiadd/waiting-gaming --ref main
+codex plugin add waiting-gaming@waiting-gaming
+```
+
+如果要从源码构建并安装本地版本，按下面的步骤操作。
+
 1. 在同一目录用 `codex` 注册构建生成的本地插件目录。
 
    ```powershell
@@ -53,3 +62,9 @@ codex plugin add waiting-gaming@waiting-gaming-local
 - **停用插件**。在 Codex 插件目录的已安装列表中停用或卸载插件，已经打开的小窗可以直接关闭。若以后也无需从这份本地目录安装，运行 `codex plugin marketplace remove waiting-gaming-local`。
 
 运行期间，插件的数据目录保存回合标识的哈希、事件类型、时间、所属窗口及其进程标识，以及棋盘、分数和上次关闭位置。
+
+## 发布与许可证
+
+项目采用 [MIT 许可证](LICENSE)，安全问题请通过 [私密报告入口](https://github.com/paranoiadd/waiting-gaming/security/advisories/new)提交。
+
+`package/` 是用于仓库插件目录分发的完整安装包，包含清单、Hooks、图标和 Windows 可执行程序。运行 `build.ps1 -Test` 会重新构建并更新 `package/bin/`，发布时将这两个程序与对应源码一起提交。

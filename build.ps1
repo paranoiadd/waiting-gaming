@@ -76,6 +76,11 @@ if ($Test) {
 
 [void][System.IO.Directory]::CreateDirectory($binaryDirectory)
 [void][System.IO.Directory]::CreateDirectory($catalogDirectory)
+$packageRuntimeDirectory = Join-Path $packageDirectory 'bin'
+[void][System.IO.Directory]::CreateDirectory($packageRuntimeDirectory)
+# Repo marketplaces install the published bundle without running a source build.
+Copy-Item -LiteralPath $gameExecutable, $hookExecutable -Destination $packageRuntimeDirectory -Force
+Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'LICENSE'), (Join-Path $PSScriptRoot 'SECURITY.md') -Destination $packageDirectory -Force
 Get-ChildItem -LiteralPath $packageDirectory -Force | ForEach-Object {
     Copy-Item -LiteralPath $_.FullName -Destination $pluginDirectory -Recurse -Force
 }
