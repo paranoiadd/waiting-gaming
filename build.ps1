@@ -46,11 +46,12 @@ foreach ($relativePath in '.codex-plugin\plugin.json', 'hooks\hooks.json') {
 }
 
 $turnEvents = Join-Path $sourceDirectory 'TurnEvents.cs'
+$codexWindow = Join-Path $sourceDirectory 'CodexWindow.cs'
 $hook = Join-Path $sourceDirectory 'Hook.cs'
 $program = Join-Path $sourceDirectory 'Program.cs'
 $windowManifest = Join-Path $sourceDirectory 'WaitingGaming.manifest'
 $gameSources = Get-ChildItem -LiteralPath $sourceDirectory -Filter 'Game*.cs' -File | ForEach-Object FullName
-$windowSources = @($program, $turnEvents) + @($gameSources)
+$windowSources = @($program, $turnEvents, $codexWindow) + @($gameSources)
 $windowReferences = @('/reference:System.Windows.Forms.dll', '/reference:System.Drawing.dll')
 $jsonReference = '/reference:System.Web.Extensions.dll'
 
@@ -60,7 +61,7 @@ $hookExecutable = Join-Path $compiledDirectory 'WaitingGaming.Hook.exe'
 
 $gameOptions = $windowReferences + @($jsonReference, "/win32manifest:$windowManifest")
 Invoke-CSharpCompiler -OutputPath $gameExecutable -Target winexe -SourceFiles $windowSources -Options $gameOptions
-Invoke-CSharpCompiler -OutputPath $hookExecutable -Target exe -SourceFiles @($hook, $turnEvents) -Options @($jsonReference)
+Invoke-CSharpCompiler -OutputPath $hookExecutable -Target exe -SourceFiles @($hook, $turnEvents, $codexWindow) -Options @($jsonReference)
 
 if ($Test) {
     $testExecutable = Join-Path $compiledDirectory 'WaitingGaming.Tests.exe'

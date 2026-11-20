@@ -26,6 +26,7 @@ namespace WaitingGaming
         private static void HandleEvent()
         {
             DateTimeOffset now = DateTimeOffset.UtcNow;
+            WindowOwner foregroundOwner = CodexWindow.CaptureForeground();
             var serializer = new JavaScriptSerializer { MaxJsonLength = int.MaxValue };
             string json;
             using (var input = new StreamReader(Console.OpenStandardInput(), Encoding.UTF8))
@@ -46,9 +47,9 @@ namespace WaitingGaming
 
             string dataDirectory = Environment.GetEnvironmentVariable("PLUGIN_DATA");
             bool recorded = TurnEvents.Record(dataDirectory, Field(message, "session_id"),
-                Field(message, "turn_id"), kind, now);
+                Field(message, "turn_id"), kind, now, foregroundOwner);
 
-            if (recorded && kind == TurnEventKind.Start)
+            if (recorded && kind == TurnEventKind.Start && foregroundOwner != null)
                 StartGame(dataDirectory);
         }
 

@@ -1,7 +1,6 @@
 using System;
-using System.Drawing;
+using System.Collections.Generic;
 using System.IO;
-using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
 using System.Threading;
@@ -30,8 +29,9 @@ namespace WaitingGaming
             {
                 try
                 {
-                    using (var window = new GameWindow(GameBoard.Load(dataDirectory), false))
+                    using (var window = new GameWindow(GameBoard.Load(dataDirectory), new GameWindowState(dataDirectory)))
                     {
+                        window.RestorePosition(IntPtr.Zero);
                         window.SetStatus("预览模式", false);
                         Application.Run(window);
                     }
@@ -103,7 +103,10 @@ namespace WaitingGaming
         private readonly string dataDirectory;
         private readonly TurnEvents turns;
         private readonly System.Windows.Forms.Timer timer;
+        private readonly List<TurnInvitation> pending = new List<TurnInvitation>();
         private GameWindow window;
+        private GameInvitationWindow invitation;
+        private TurnInvitation invitationTurn;
         private DateTimeOffset? idleSince;
 
         public GameApplication(string dataDirectory)
@@ -119,25 +122,35 @@ namespace WaitingGaming
         {
             var now = DateTimeOffset.UtcNow;
             TurnSnapshot snapshot = turns.Read(now);
-            if (snapshot.ShouldShow)
+            pending.RemoveAll(turn => !snapshot.ActiveTurnKeys.Contains(turn.Key) || !CodexWindow.IsValid(turn.Owner));
+            if (invitationTurn != null && !pending.Exists(turn => turn.Key == invitationTurn.Key))
             {
-                if (window == null)
-                {
-                    window = new GameWindow(GameBoard.Load(dataDirectory), true);
-                    window.FormClosing += HideGame;
-                    window.FormClosed += CloseApplication;
-                }
-                UpdateStatus(snapshot);
-                if (!window.Visible)
-                {
-                    window.PlaceAtCorner();
-                    window.Show();
-                }
-                turns.MarkVisible();
+                CloseInvitation();
             }
-            else if (window != null && window.Visible)
+            if (window != null && window.Visible)
             {
+                foreach (TurnInvitation turn in snapshot.EligibleTurns)
+                {
+                    turns.MarkSeen(turn.Key);
+                }
+                pending.Clear();
+                CloseInvitation();
                 UpdateStatus(snapshot);
+            }
+            else
+            {
+                foreach (TurnInvitation turn in snapshot.EligibleTurns)
+                {
+                    if (!CodexWindow.IsValid(turn.Owner))
+                    {
+                        turns.MarkSeen(turn.Key);
+                    }
+                    else if (!pending.Exists(candidate => candidate.Key == turn.Key))
+                    {
+                        pending.Add(turn);
+                    }
+                }
+                UpdateInvitation();
             }
 
             if (snapshot.HasActiveTurns || (window != null && window.Visible))
@@ -152,6 +165,85 @@ namespace WaitingGaming
             if (now - idleSince.Value >= TimeSpan.FromSeconds(10))
             {
                 ExitThread();
+            }
+        }
+
+        private void UpdateInvitation()
+        {
+            TurnInvitation candidate = pending.Find(turn =>
+                CodexWindow.IsForeground(turn.Owner) ||
+                (invitationTurn == turn && invitation != null && invitation.Visible && invitation.ContainsFocus));
+            WindowBounds bounds;
+            if (candidate == null || !CodexWindow.TryGetVisibleBounds(candidate.Owner, out bounds))
+            {
+                if (invitation != null)
+                {
+                    invitation.Hide();
+                }
+                return;
+            }
+            if (invitationTurn != candidate)
+            {
+                CloseInvitation();
+                invitationTurn = candidate;
+                invitation = new GameInvitationWindow();
+                invitation.StartRequested += StartGame;
+                invitation.Declined += DeclineGame;
+            }
+            if (!invitation.FollowOwner(bounds))
+            {
+                return;
+            }
+            if (!invitation.Visible)
+            {
+                // Persist the offer before showing it so a process restart won't ask twice.
+                turns.MarkSeen(candidate.Key);
+                invitation.Show(new WindowReference(candidate.Owner.Handle));
+            }
+        }
+
+        private void StartGame(object sender, EventArgs eventArgs)
+        {
+            TurnInvitation selected = invitationTurn;
+            if (selected == null)
+            {
+                return;
+            }
+            TurnSnapshot snapshot = turns.Read(DateTimeOffset.UtcNow);
+            bool active = snapshot.ActiveTurnKeys.Contains(selected.Key) && CodexWindow.IsValid(selected.Owner);
+            pending.Remove(selected);
+            CloseInvitation();
+            if (!active)
+            {
+                return;
+            }
+            if (window == null)
+            {
+                window = new GameWindow(GameBoard.Load(dataDirectory), new GameWindowState(dataDirectory));
+                window.FormClosing += HideGame;
+                window.FormClosed += CloseApplication;
+            }
+            UpdateStatus(snapshot);
+            window.RestorePosition(new IntPtr(selected.Owner.Handle));
+            window.Show();
+            window.Activate();
+        }
+
+        private void DeclineGame(object sender, EventArgs eventArgs)
+        {
+            pending.Remove(invitationTurn);
+            CloseInvitation();
+        }
+
+        private void CloseInvitation()
+        {
+            if (invitation != null)
+            {
+                invitation.StartRequested -= StartGame;
+                invitation.Declined -= DeclineGame;
+                invitation.Dispose();
+                invitation = null;
+                invitationTurn = null;
             }
         }
 
@@ -180,8 +272,6 @@ namespace WaitingGaming
             if (eventArgs.CloseReason == CloseReason.UserClosing)
             {
                 eventArgs.Cancel = true;
-                turns.Read(DateTimeOffset.UtcNow);
-                turns.DismissActive();
                 window.Hide();
             }
         }
@@ -199,6 +289,7 @@ namespace WaitingGaming
             if (disposing)
             {
                 timer.Dispose();
+                CloseInvitation();
                 if (window != null)
                 {
                     window.FormClosing -= HideGame;

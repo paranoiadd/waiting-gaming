@@ -2,7 +2,6 @@ using System;
 using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.Globalization;
-using System.Runtime.InteropServices;
 using System.Windows.Forms;
 
 namespace WaitingGaming
@@ -19,17 +18,17 @@ namespace WaitingGaming
         private static readonly Font TextFont = new Font("Microsoft YaHei UI", 9);
 
         private readonly GameBoard game;
-        private readonly bool showWithoutActivation;
+        private readonly GameWindowState windowState;
         private readonly Label status;
         private readonly Label score;
         private readonly Label best;
         private readonly Label gameHint;
         private readonly BoardView board;
 
-        public GameWindow(GameBoard game, bool showWithoutActivation)
+        public GameWindow(GameBoard game, GameWindowState windowState)
         {
             this.game = game;
-            this.showWithoutActivation = showWithoutActivation;
+            this.windowState = windowState;
             SuspendLayout();
             AutoScaleDimensions = new SizeF(96, 96);
             AutoScaleMode = AutoScaleMode.Dpi;
@@ -38,7 +37,7 @@ namespace WaitingGaming
             BackColor = Paper;
             ForeColor = Ink;
             Text = "等待小游戏 · 2048";
-            StartPosition = showWithoutActivation ? FormStartPosition.Manual : FormStartPosition.CenterScreen;
+            StartPosition = FormStartPosition.Manual;
             FormBorderStyle = FormBorderStyle.FixedSingle;
             MaximizeBox = false;
             MinimizeBox = false;
@@ -76,17 +75,26 @@ namespace WaitingGaming
             ResumeLayout(false);
         }
 
-        protected override bool ShowWithoutActivation { get { return showWithoutActivation; } }
-
-        public void PlaceAtCorner()
+        public void RestorePosition(IntPtr ownerHandle)
         {
-            IntPtr foreground = GetForegroundWindow();
-            Screen screen = foreground == IntPtr.Zero ? Screen.FromPoint(Cursor.Position) : Screen.FromHandle(foreground);
-            Rectangle area = screen.WorkingArea;
+            Screen screen = ownerHandle == IntPtr.Zero ? Screen.FromPoint(Cursor.Position) : Screen.FromHandle(ownerHandle);
+            Screen[] screens = Screen.AllScreens;
+            var workAreas = new Rectangle[screens.Length];
+            for (int index = 0; index < screens.Length; index++)
+            {
+                workAreas[index] = screens[index].WorkingArea;
+            }
             PerformLayout();
-            const int margin = 16;
-            Location = new Point(Math.Max(area.Left, area.Right - Width - margin),
-                                 Math.Max(area.Top, area.Bottom - Height - margin));
+            Location = windowState.Restore(Size, screen.WorkingArea, workAreas);
+        }
+
+        protected override void OnFormClosing(FormClosingEventArgs eventArgs)
+        {
+            if (Visible)
+            {
+                windowState.Save(WindowState == FormWindowState.Normal ? Location : RestoreBounds.Location);
+            }
+            base.OnFormClosing(eventArgs);
         }
 
         public void SetStatus(string message, bool active)
@@ -160,8 +168,6 @@ namespace WaitingGaming
             board.RefreshBoard();
         }
 
-        [DllImport("user32.dll")]
-        private static extern IntPtr GetForegroundWindow();
     }
 
     internal sealed class BoardView : Control

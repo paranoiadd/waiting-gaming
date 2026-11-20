@@ -1,6 +1,8 @@
 using System;
 using System.Diagnostics;
+using System.Drawing;
 using System.IO;
+using System.Web.Script.Serialization;
 
 namespace WaitingGaming
 {
@@ -15,7 +17,9 @@ namespace WaitingGaming
             Run("2048 can continue after winning and detects a full board", WinAndGameOver);
             Run("2048 recovers from a corrupt save", CorruptSave);
             Run("Fast, late and duplicate hooks do not show the game", ShortAndReorderedTurns);
-            Run("A long turn shows once, and later turns can reopen", LongAndConcurrentTurns);
+            Run("Offers are acknowledged per turn across concurrent sessions", LongAndConcurrentTurns);
+            Run("Window metadata supports legacy and malformed event receipts", LegacyWindowEvents);
+            Run("Game position persists and follows available screens", WindowPositions);
             Run("Hook process accepts stdin and omits conversation content", HookInput);
         }
 
@@ -95,37 +99,97 @@ namespace WaitingGaming
         private static void ShortAndReorderedTurns(string directory)
         {
             var turns = new TurnEvents(directory);
-            Check(TurnEvents.Record(directory, "session-A", "1", TurnEventKind.Start, Start), "publish start");
-            Check(!turns.Read(Start.AddSeconds(3.9)).ShouldShow, "threshold is 4 seconds");
+            Check(TurnEvents.Record(directory, "session-A", "1", TurnEventKind.Start, Start, TestOwner()), "publish start");
+            Check(turns.Read(Start.AddSeconds(3.9)).EligibleTurns.Count == 0, "threshold is 4 seconds");
             Check(!TurnEvents.Record(directory, "session-A", "1", TurnEventKind.Start, Start.AddSeconds(2)),
                 "a duplicate cannot reset the waiting timer");
             TurnEvents.Record(directory, "session-A", "1", TurnEventKind.Stop, Start.AddSeconds(2));
             TurnSnapshot shortTurn = turns.Read(Start.AddSeconds(5));
-            Check(!shortTurn.ShouldShow && !shortTurn.HasActiveTurns && shortTurn.LatestTerminal == TurnEventKind.Stop,
+            Check(shortTurn.EligibleTurns.Count == 0 && !shortTurn.HasActiveTurns && shortTurn.LatestTerminal == TurnEventKind.Stop,
                 "a quick stop should suppress the popup");
             TurnEvents.Record(directory, "session-A", "2", TurnEventKind.Interrupt, Start.AddSeconds(6));
-            TurnEvents.Record(directory, "session-A", "2", TurnEventKind.Start, Start.AddSeconds(7));
+            TurnEvents.Record(directory, "session-A", "2", TurnEventKind.Start, Start.AddSeconds(7), TestOwner());
             TurnSnapshot reordered = turns.Read(Start.AddSeconds(12));
-            Check(!reordered.ShouldShow && !reordered.HasActiveTurns && reordered.LatestTerminal == TurnEventKind.Interrupt,
+            Check(reordered.EligibleTurns.Count == 0 && !reordered.HasActiveTurns && reordered.LatestTerminal == TurnEventKind.Interrupt,
                 "an interrupt received first should still win over a late start");
         }
 
         private static void LongAndConcurrentTurns(string directory)
         {
             var turns = new TurnEvents(directory);
-            TurnEvents.Record(directory, "session-A", "same-turn-id", TurnEventKind.Start, Start);
-            TurnEvents.Record(directory, "session-B", "same-turn-id", TurnEventKind.Start, Start.AddSeconds(2));
-            Check(turns.Read(Start.AddSeconds(4)).ShouldShow, "first turn should show");
-            turns.MarkVisible();
+            TurnEvents.Record(directory, "session-A", "same-turn-id", TurnEventKind.Start, Start, TestOwner());
+            TurnEvents.Record(directory, "session-B", "same-turn-id", TurnEventKind.Start, Start.AddSeconds(2), TestOwner());
+            TurnSnapshot first = turns.Read(Start.AddSeconds(4));
+            Check(first.EligibleTurns.Count == 1 && first.ActiveTurnKeys.Count == 2, "only first turn has waited four seconds");
+            TurnInvitation offered = first.EligibleTurns[0];
+            Check(offered.Owner.ProcessId == 2 && offered.Owner.Handle == 1, "window identity survives receipt serialization");
+            turns.MarkSeen(offered.Key);
             TurnEvents.Record(directory, "session-A", "same-turn-id", TurnEventKind.Stop, Start.AddSeconds(5));
             TurnSnapshot overlapping = turns.Read(Start.AddSeconds(7));
-            Check(overlapping.HasActiveTurns && !overlapping.ShouldShow, "finishing A must leave B active");
-            turns.DismissActive();
-            Check(!new TurnEvents(directory).Read(Start.AddSeconds(8)).ShouldShow, "dismissed turns must survive a restart");
-            TurnEvents.Record(directory, "session-B", "next", TurnEventKind.Start, Start.AddSeconds(8));
-            Check(turns.Read(Start.AddSeconds(12)).ShouldShow, "a later turn can reopen");
+            Check(overlapping.HasActiveTurns && overlapping.EligibleTurns.Count == 1 &&
+                overlapping.EligibleTurns[0].Key != offered.Key, "offering A must not consume the younger B turn");
+            turns.MarkSeen(overlapping.EligibleTurns[0].Key);
+            Check(new TurnEvents(directory).Read(Start.AddSeconds(8)).EligibleTurns.Count == 0,
+                "an offered turn must not invite again after restart");
+            TurnEvents.Record(directory, "session-B", "next", TurnEventKind.Start, Start.AddSeconds(8), TestOwner());
+            Check(turns.Read(Start.AddSeconds(12)).EligibleTurns.Count == 1, "a later turn can invite");
             TurnEvents.Record(directory, "session-B", "next", TurnEventKind.Interrupt, Start.AddSeconds(13));
-            Check(!turns.Read(Start.AddSeconds(14)).ShouldShow, "an interruption should not open another popup");
+            Check(turns.Read(Start.AddSeconds(14)).EligibleTurns.Count == 0, "an interruption should not open another popup");
+        }
+
+        private static WindowOwner TestOwner()
+        {
+            return new WindowOwner(1, 2, Start.UtcDateTime.Ticks);
+        }
+
+        private static void LegacyWindowEvents(string directory)
+        {
+            TurnEvents.Record(directory, "legacy", "one", TurnEventKind.Start, Start);
+            TurnEvents.Record(directory, "new", "two", TurnEventKind.Start, Start, TestOwner());
+            string[] starts = Directory.GetFiles(Path.Combine(directory, "turn-events"), "*.Start.evt");
+            foreach (string file in starts)
+            {
+                if (new FileInfo(file).Length != 0)
+                {
+                    File.WriteAllText(file, "{invalid-json");
+                    File.SetLastWriteTimeUtc(file, Start.UtcDateTime);
+                }
+            }
+            TurnSnapshot snapshot = new TurnEvents(directory).Read(Start.AddSeconds(5));
+            Check(snapshot.ActiveTurnKeys.Count == 2 && snapshot.EligibleTurns.Count == 0,
+                "legacy and malformed starts should remain active without a window invitation");
+            TurnEvents.Record(directory, "new", "two", TurnEventKind.Stop, Start.AddSeconds(6));
+            snapshot = new TurnEvents(directory).Read(Start.AddSeconds(7));
+            Check(snapshot.ActiveTurnKeys.Count == 1 && snapshot.LatestTerminal == TurnEventKind.Stop,
+                "terminal receipts must work with legacy start metadata");
+            Check(!CodexWindow.IsValid(null) && !CodexWindow.IsValid(TestOwner()),
+                "an arbitrary or missing window identity must not become a Codex owner");
+        }
+
+        private static void WindowPositions(string directory)
+        {
+            var size = new Size(330, 540);
+            var primary = new Rectangle(0, 0, 1920, 1040);
+            var left = new Rectangle(-1280, -100, 1280, 984);
+            Rectangle[] areas = { primary, left };
+            var settings = new GameWindowState(directory);
+            Check(settings.Restore(size, primary, areas) == new Point(795, 250), "first launch should be centered");
+            settings.Save(new Point(-1000, 90));
+            Check(settings.Restore(size, primary, areas) == new Point(-1000, 90), "same-process position should be kept");
+            settings = new GameWindowState(directory);
+            Check(settings.Restore(size, primary, areas) == new Point(-1000, 90), "negative coordinates should restore across restarts");
+            Check(settings.Restore(size, primary, new[] { primary }) == new Point(0, 90),
+                "a disconnected monitor should restore into a live work area");
+            settings.Save(new Point(1900, 1000));
+            Check(settings.Restore(size, primary, areas) == new Point(1590, 500), "position must fit within taskbar work area");
+            File.WriteAllText(Path.Combine(directory, "window.dat"), "broken");
+            Check(new GameWindowState(directory).Restore(size, primary, areas) == new Point(795, 250),
+                "invalid position settings should fall back to center");
+            Point extreme = GameWindowState.Place(new Point(int.MinValue, int.MaxValue), size, primary, areas);
+            Check(left.Contains(new Rectangle(extreme, size)), "extreme coordinates must be clamped without overflow");
+            Rectangle tiny = new Rectangle(20, 30, 100, 100);
+            Check(GameWindowState.Place(new Point(900, 900), size, tiny, new[] { tiny }) == tiny.Location,
+                "a tiny display must keep the title bar reachable");
         }
 
         private static void HookInput(string directory)
@@ -151,9 +215,18 @@ namespace WaitingGaming
                     "hook should return only an empty JSON response");
             }
             string[] receipts = Directory.GetFiles(Path.Combine(directory, "turn-events"));
-            Check(receipts.Length == 1 && new FileInfo(receipts[0]).Length == 0 &&
-                Path.GetFileName(receipts[0]).IndexOf("private", StringComparison.Ordinal) == -1,
-                "receipt should contain no prompt text or raw identifiers");
+            Check(receipts.Length == 1 && Path.GetFileName(receipts[0]).IndexOf("private", StringComparison.Ordinal) == -1,
+                "receipt filenames should contain no raw identifiers");
+            string receipt = File.ReadAllText(receipts[0]);
+            Check(!receipt.Contains("private") && !receipt.Contains("prompt") && !receipt.Contains("session"),
+                "receipt should contain no conversation content");
+            if (receipt.Length != 0)
+            {
+                var metadata = new JavaScriptSerializer().DeserializeObject(receipt) as System.Collections.Generic.Dictionary<string, object>;
+                Check(metadata != null && metadata.Count == 4 && metadata.ContainsKey("hwnd") && metadata.ContainsKey("process_id") &&
+                    metadata.ContainsKey("process_start_utc_ticks") && metadata.ContainsKey("version"),
+                    "only native window identity may accompany a start receipt");
+            }
         }
 
         private static void SeedBoard(string directory, long score, long best, params int[] tiles)
