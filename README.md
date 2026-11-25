@@ -1,5 +1,7 @@
 # Codex 等待小游戏 · 2048
 
+[![HOL Verified](https://img.shields.io/endpoint?url=https%3A%2F%2Fhol.org%2Fapi%2Fregistry%2Fbadges%2Fplugin%3Fslug%3Dparanoiadd%252Fwaiting-gaming%26metric%3Dverified)](https://hol.org/registry/plugins/paranoiadd%2Fwaiting-gaming)
+
 在 Windows Codex 桌面版发送消息后，回合持续超过 4 秒时，触发任务的 Codex 窗口上会出现一个游戏邀请。点击「开始游戏」打开 2048，点击「本次不玩」跳过本轮。邀请出现时保留当前输入焦点，回合收尾或中断时会取消尚未接受的邀请。
 
 第一次打开游戏时，棋盘位于触发任务的 Codex 窗口所在屏幕中央。你可以拖动游戏窗口，关闭后，下次会恢复上次关闭时的位置。点击游戏窗口后用方向键移动，棋盘和分数会在每次有效移动后保存。点击「重新开局」可以重开并保留最高分。
